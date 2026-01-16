@@ -36,6 +36,6 @@ serde_json.workspace = true
 alloy-genesis.workspace = true
 
 [features]
-default = ["rpc"]
+default = []
 rpc = ["dep:reth-rpc-eth-api", "morph-revm/rpc"]
 engine = []
