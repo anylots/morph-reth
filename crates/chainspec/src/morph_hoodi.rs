@@ -1,6 +1,8 @@
 //! Morph Hoodi (testnet) chain specification.
 
-use crate::MorphChainSpec;
+use crate::{
+    MORPH_HOODI_GENESIS_HASH, MORPH_HOODI_GENESIS_STATE_ROOT, MorphChainSpec, spec::GenesisConfig,
+};
 use alloy_genesis::Genesis;
 use std::sync::{Arc, LazyLock};
 
@@ -8,7 +10,12 @@ use std::sync::{Arc, LazyLock};
 pub static MORPH_HOODI: LazyLock<Arc<MorphChainSpec>> = LazyLock::new(|| {
     let genesis: Genesis = serde_json::from_str(include_str!("../res/genesis/hoodi.json"))
         .expect("Failed to parse Morph Hoodi genesis");
-    MorphChainSpec::from(genesis).into()
+
+    // Use ZK-trie state root (hardcoded constant from go-ethereum)
+    let config = GenesisConfig::default()
+        .with_state_root(MORPH_HOODI_GENESIS_STATE_ROOT, MORPH_HOODI_GENESIS_HASH);
+
+    MorphChainSpec::from_genesis_with_config(genesis, config).into()
 });
 
 #[cfg(test)]
@@ -16,10 +23,16 @@ mod tests {
     use super::*;
     use crate::{MORPH_HOODI_CHAIN_ID, hardfork::MorphHardforks};
     use alloy_primitives::address;
+    use reth_chainspec::EthChainSpec;
 
     #[test]
     fn test_morph_hoodi_chain_id() {
         assert_eq!(MORPH_HOODI.inner.chain.id(), MORPH_HOODI_CHAIN_ID);
+    }
+
+    #[test]
+    fn test_morph_hoodi_genesis_hash() {
+        assert_eq!(MORPH_HOODI.genesis_hash(), MORPH_HOODI_GENESIS_HASH);
     }
 
     #[test]

@@ -19,6 +19,7 @@ morph-primitives = { workspace = true, features = ["serde-bincode-compat"] }
 reth-payload-builder.workspace = true
 reth-payload-primitives.workspace = true
 reth-primitives-traits.workspace = true
+reth-ethereum-primitives = { workspace = true, features = ["serde", "serde-bincode-compat"] }
 
 # Alloy
 alloy-consensus.workspace = true
@@ -36,3 +37,6 @@ sha2.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
+
+[features]
+default = []
