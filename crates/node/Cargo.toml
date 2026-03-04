@@ -23,8 +23,10 @@ morph-txpool.workspace = true
 
 # Reth dependencies
 reth-db.workspace = true
+reth-chainspec.workspace = true
 reth-engine-local.workspace = true
 reth-engine-tree.workspace = true
+reth-errors.workspace = true
 reth-node-api.workspace = true
 reth-node-builder.workspace = true
 reth-node-ethereum.workspace = true
@@ -36,6 +38,7 @@ reth-rpc-builder.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-tracing.workspace = true
+reth-trie.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
@@ -47,10 +50,17 @@ alloy-rpc-types-eth.workspace = true
 # Async
 eyre.workspace = true
 clap.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+tokio-stream.workspace = true
+
+# HTTP (for geth diskRoot RPC cross-validation)
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-reth-chainspec.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-node-core.workspace = true
 reth-tasks.workspace = true

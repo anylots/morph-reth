@@ -4,6 +4,7 @@
 //! allowing the sequencer to interact with the execution layer via RPC.
 
 use crate::{EngineApiResult, api::MorphL2EngineApi};
+use alloy_primitives::B256;
 use jsonrpsee::{RpcModule, core::RpcResult, proc_macros::rpc};
 use morph_payload_types::{AssembleL2BlockParams, ExecutableL2Data, GenericResponse, SafeL2Data};
 use morph_primitives::MorphHeader;
@@ -48,6 +49,18 @@ pub trait MorphL2EngineRpc {
     /// `engine_newSafeL2Block`
     #[method(name = "newSafeL2Block")]
     async fn new_safe_l2_block(&self, data: SafeL2Data) -> RpcResult<MorphHeader>;
+
+    /// Set the safe and finalized block tags.
+    ///
+    /// # JSON-RPC Method
+    ///
+    /// `engine_setBlockTags`
+    #[method(name = "setBlockTags")]
+    async fn set_block_tags(
+        &self,
+        safe_block_hash: B256,
+        finalized_block_hash: B256,
+    ) -> RpcResult<()>;
 }
 
 /// Implementation of the L2 Engine RPC API.
@@ -105,11 +118,11 @@ where
     }
 
     async fn new_l2_block(&self, data: ExecutableL2Data) -> RpcResult<()> {
-        tracing::info!(
+        tracing::debug!(
             target: "morph::engine",
             block_number = data.number,
             block_hash = %data.hash,
-            "importing new L2 block"
+            "RPC newL2Block called"
         );
 
         self.inner.new_l2_block(data).await.map_err(|e| {
@@ -119,16 +132,37 @@ where
     }
 
     async fn new_safe_l2_block(&self, data: SafeL2Data) -> RpcResult<MorphHeader> {
-        tracing::info!(
+        tracing::debug!(
             target: "morph::engine",
             block_number = data.number,
-            "importing safe L2 block"
+            "RPC newSafeL2Block called"
         );
 
         self.inner.new_safe_l2_block(data).await.map_err(|e| {
             tracing::error!(target: "morph::engine", error = %e, "failed to import safe L2 block");
             e.into()
         })
+    }
+
+    async fn set_block_tags(
+        &self,
+        safe_block_hash: B256,
+        finalized_block_hash: B256,
+    ) -> RpcResult<()> {
+        tracing::debug!(
+            target: "morph::engine",
+            %safe_block_hash,
+            %finalized_block_hash,
+            "RPC setBlockTags called"
+        );
+
+        self.inner
+            .set_block_tags(safe_block_hash, finalized_block_hash)
+            .await
+            .map_err(|e| {
+                tracing::error!(target: "morph::engine", error = %e, "failed to set block tags");
+                e.into()
+            })
     }
 }
 

@@ -5,6 +5,7 @@
 //! by the sequencer to produce new blocks.
 
 use crate::EngineApiResult;
+use alloy_primitives::B256;
 use morph_payload_types::{AssembleL2BlockParams, ExecutableL2Data, GenericResponse, SafeL2Data};
 use morph_primitives::MorphHeader;
 
@@ -20,6 +21,7 @@ use morph_primitives::MorphHeader;
 /// - `validate_l2_block`: Validate an L2 block without importing it
 /// - `new_l2_block`: Import and finalize a new L2 block
 /// - `new_safe_l2_block`: Import a safe L2 block from derivation
+/// - `set_block_tags`: Update safe/finalized block tags without importing a block
 #[async_trait::async_trait]
 #[auto_impl::auto_impl(Arc, &, Box)]
 pub trait MorphL2EngineApi: Send + Sync {
@@ -45,8 +47,10 @@ pub trait MorphL2EngineApi: Send + Sync {
 
     /// Validate an L2 block without importing it.
     ///
-    /// This method validates a block by re-executing it and comparing the results.
-    /// If the block has been previously validated (cached), it returns immediately.
+    /// This method validates a block by forwarding it to the reth engine tree
+    /// (`newPayload`) and mapping the returned payload status to a boolean.
+    ///
+    /// It does not issue a forkchoice update, so it does not advance canonical head.
     ///
     /// # Arguments
     ///
@@ -59,8 +63,8 @@ pub trait MorphL2EngineApi: Send + Sync {
 
     /// Import and finalize a new L2 block.
     ///
-    /// This method imports a validated block into the chain and updates the
-    /// canonical head. The block must have been previously validated.
+    /// This method imports a block through the reth engine pipeline using
+    /// `newPayload + forkchoiceUpdated`, which advances the canonical head on success.
     ///
     /// # Arguments
     ///
@@ -86,4 +90,21 @@ pub trait MorphL2EngineApi: Send + Sync {
     ///
     /// Returns the header of the imported block.
     async fn new_safe_l2_block(&self, data: SafeL2Data) -> EngineApiResult<MorphHeader>;
+
+    /// Set the safe and finalized block tags.
+    ///
+    /// This method updates the safe and finalized block pointers without
+    /// importing any new block. It aligns with go-ethereum's `engine_setBlockTags`.
+    ///
+    /// Either hash can be `B256::ZERO` to skip updating that tag.
+    ///
+    /// # Arguments
+    ///
+    /// * `safe_block_hash` - Hash of the block to mark as safe
+    /// * `finalized_block_hash` - Hash of the block to mark as finalized
+    async fn set_block_tags(
+        &self,
+        safe_block_hash: B256,
+        finalized_block_hash: B256,
+    ) -> EngineApiResult<()>;
 }
