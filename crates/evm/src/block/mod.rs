@@ -20,19 +20,19 @@ use alloy_consensus::Transaction;
 use alloy_consensus::transaction::TxHashRef;
 use alloy_evm::{
     Database, Evm,
-    block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, ExecutableTx, OnStateHook},
+    block::{
+        BlockExecutionError, BlockExecutionResult, BlockExecutor, ExecutableTx, OnStateHook,
+        StateChangeSource,
+    },
 };
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use curie::apply_curie_hard_fork;
 use morph_chainspec::{MorphChainSpec, MorphHardfork, MorphHardforks};
 use morph_primitives::{MorphReceipt, MorphTxEnvelope};
-use morph_revm::{
-    L1_GAS_PRICE_ORACLE_ADDRESS, L1BlockInfo, MorphHaltReason, TokenFeeInfo, evm::MorphContext,
-};
+use morph_revm::{L1_GAS_PRICE_ORACLE_ADDRESS, MorphHaltReason, TokenFeeInfo, evm::MorphContext};
 use reth_chainspec::EthereumHardforks;
 use reth_revm::{DatabaseCommit, Inspector, State, context::result::ResultAndState};
 use revm::context::Block;
-use std::marker::PhantomData;
 
 /// Block executor for Morph L2 blocks.
 ///
@@ -71,8 +71,12 @@ pub(crate) struct MorphBlockExecutor<'a, DB: Database, I> {
     receipts: Vec<MorphReceipt>,
     /// Total gas used by executed transactions
     gas_used: u64,
-    /// Phantom data for inspector type
-    _phantom: PhantomData<I>,
+    /// Cached hardfork for this block (constant across all transactions).
+    /// Set in `apply_pre_execution_changes`, reused in `commit_transaction`.
+    hardfork: MorphHardfork,
+    /// Hook for notifying the engine about per-transaction state changes.
+    /// Used by `StateRootTask` for incremental sparse trie computation.
+    state_hook: Option<Box<dyn OnStateHook>>,
 }
 
 impl<'a, DB, I> MorphBlockExecutor<'a, DB, I>
@@ -97,52 +101,20 @@ where
             receipt_builder,
             receipts: Vec::new(),
             gas_used: 0,
-            _phantom: PhantomData,
+            hardfork: MorphHardfork::default(),
+            state_hook: None,
         }
     }
 
-    /// Calculate the L1 data fee for a transaction.
+    /// Returns the L1 data fee for the most recently executed transaction.
     ///
-    /// The L1 fee compensates for the cost of posting transaction data to Ethereum L1.
-    /// This is a key component of L2 transaction costs on Morph.
-    ///
-    /// # Calculation Steps
-    /// 1. Check if transaction is an L1 message (which don't pay L1 fees)
-    /// 2. Get RLP-encoded transaction bytes
-    /// 3. Fetch L1 block info from L1 Gas Price Oracle contract
-    /// 4. Calculate fee based on transaction size and L1 gas price
-    ///
-    /// # Arguments
-    /// * `tx` - The transaction to calculate L1 fee for
-    /// * `hardfork` - The current Morph hardfork (affects fee calculation formula)
-    ///
-    /// # Returns
-    /// - `Ok(U256::ZERO)` for L1 message transactions
-    /// - `Ok(fee)` for regular transactions, where fee = f(tx_size, l1_gas_price, hardfork)
-    /// - `Err` if L1 block info cannot be fetched
-    ///
-    /// # Errors
-    /// Returns error if the L1 Gas Price Oracle contract state cannot be read.
-    fn calculate_l1_fee(
-        &mut self,
-        tx: &MorphTxEnvelope,
-        hardfork: MorphHardfork,
-    ) -> Result<U256, BlockExecutionError> {
-        // L1 message transactions don't pay L1 fees
-        if tx.is_l1_msg() {
-            return Ok(U256::ZERO);
-        }
-
-        // Get the RLP-encoded transaction bytes
-        let rlp_bytes = tx.rlp();
-
-        // Fetch L1 block info from the L1 Gas Price Oracle contract
-        let l1_block_info = L1BlockInfo::try_fetch(self.evm.db_mut(), hardfork).map_err(|e| {
-            BlockExecutionError::msg(format!("Failed to fetch L1 block info: {e:?}"))
-        })?;
-
-        // Calculate L1 data fee
-        Ok(l1_block_info.calculate_tx_l1_cost(rlp_bytes.as_ref(), hardfork))
+    /// Reads from the handler's per-transaction cache (set during
+    /// `validate_and_deduct_eth_fee` / `validate_and_deduct_token_fee`),
+    /// avoiding re-encoding the full transaction RLP.
+    /// For L1 messages (which skip handler fee logic) the cache is ZERO.
+    #[inline]
+    fn cached_l1_fee(&self) -> U256 {
+        self.evm.cached_l1_data_fee()
     }
 
     /// Extract MorphTx-specific fields for MorphTx (0x7F) transactions.
@@ -160,6 +132,7 @@ where
     ///
     /// # Arguments
     /// * `tx` - The transaction to extract fields from
+    /// * `sender` - Transaction sender (used for token registry balance queries)
     /// * `hardfork` - The current Morph hardfork (affects token registry behavior)
     ///
     /// # Returns
@@ -170,11 +143,11 @@ where
     /// # Errors
     /// Returns error if:
     /// - MorphTx is missing `fee_token_id` or `fee_limit`
-    /// - Transaction sender cannot be extracted
     /// - L2TokenRegistry contract cannot be queried
     fn get_morph_tx_fields(
         &mut self,
         tx: &MorphTxEnvelope,
+        sender: Address,
         hardfork: MorphHardfork,
     ) -> Result<Option<MorphReceiptTxFields>, BlockExecutionError> {
         // Only MorphTx transactions have these fields
@@ -192,20 +165,33 @@ where
         // Extract version, reference, and memo from the transaction
         let version = tx.version().unwrap_or(0);
         let reference = tx.reference();
-        let memo = tx.memo();
+        let memo = tx.memo().cloned();
 
-        // Fetch token fee info from L2TokenRegistry contract
-        // Note: We use the transaction sender as the caller address
-        // This is needed to check token balance when validating MorphTx
-        let sender = tx
-            .signer_unchecked()
-            .map_err(|_| BlockExecutionError::msg("Failed to extract signer from MorphTx"))?;
+        // For fee_token_id==0 (ETH fee MorphTx, V1 only), no token registry lookup needed.
+        // Still preserve version/reference/memo in the receipt.
+        if fee_token_id == 0 {
+            return Ok(Some(MorphReceiptTxFields {
+                version,
+                fee_token_id: 0,
+                fee_rate: U256::ZERO,
+                token_scale: U256::ZERO,
+                fee_limit,
+                reference,
+                memo,
+            }));
+        }
 
-        let token_info =
-            TokenFeeInfo::load_for_caller(self.evm.db_mut(), fee_token_id, sender, hardfork)
-                .map_err(|e| {
-                    BlockExecutionError::msg(format!("Failed to fetch token fee info: {e:?}"))
-                })?;
+        // Reuse cached token fee info from handler validation to avoid redundant DB reads.
+        // Falls back to DB read if cache is empty (e.g., in test scenarios).
+        let token_info = match self.evm.cached_token_fee_info() {
+            Some(info) => Some(info),
+            None => {
+                TokenFeeInfo::load_for_caller(self.evm.db_mut(), fee_token_id, sender, hardfork)
+                    .map_err(|e| {
+                        BlockExecutionError::msg(format!("Failed to fetch token fee info: {e:?}"))
+                    })?
+            }
+        };
 
         Ok(token_info.map(|info| MorphReceiptTxFields {
             version,
@@ -251,12 +237,21 @@ where
         let state_clear_flag = self.spec.is_spurious_dragon_active_at_block(block_number);
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
 
-        // 2. Load L1 gas oracle contract into cache
+        // 2. Load L1 gas oracle contract into cache so that subsequent per-tx
+        // L1BlockInfo reads in the handler are fast (avoid cold DB hits).
+        // NOTE: We do NOT cache L1BlockInfo here because the oracle can be
+        // updated by a regular transaction (from the external gas-oracle service)
+        // within the same block.  The handler reads it per-tx instead.
         let _ = self
             .evm
             .db_mut()
             .load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)
             .map_err(BlockExecutionError::other)?;
+
+        let hardfork = self
+            .spec
+            .morph_hardfork_at(block_number, self.evm.block().timestamp.to::<u64>());
+        self.hardfork = hardfork;
 
         // 3. Apply Curie hardfork at the transition block
         // Only executes once at the exact block where Curie activates
@@ -333,6 +328,7 @@ where
     ///
     /// # Errors
     /// Returns error if L1 fee calculation or token fee info extraction fails.
+    #[inline]
     fn commit_transaction(
         &mut self,
         output: ResultAndState<MorphHaltReason>,
@@ -340,28 +336,36 @@ where
     ) -> Result<u64, BlockExecutionError> {
         let ResultAndState { result, state } = output;
 
-        // Determine hardfork once and reuse for both L1 fee and token fee calculations
-        let block_number: u64 = self.evm.block().number.to();
-        let timestamp: u64 = self.evm.block().timestamp.to();
-        let hardfork = self.spec.morph_hardfork_at(block_number, timestamp);
+        // Read L1 fee from handler cache (set during validate_and_deduct_*).
+        let l1_fee = self.cached_l1_fee();
 
-        // Calculate L1 fee for the transaction
-        let l1_fee = self.calculate_l1_fee(tx.tx(), hardfork)?;
+        // Get MorphTx-specific fields for MorphTx transactions.
+        // Uses the hardfork cached in apply_pre_execution_changes (constant per block).
+        let morph_tx_fields = self.get_morph_tx_fields(tx.tx(), *tx.signer(), self.hardfork)?;
 
-        // Get MorphTx-specific fields for MorphTx transactions
-        let morph_tx_fields = self.get_morph_tx_fields(tx.tx(), hardfork)?;
+        // Notify the state hook (e.g. StateRootTask) BEFORE committing,
+        // so the sparse trie can be updated incrementally per transaction.
+        if let Some(hook) = &mut self.state_hook {
+            hook.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
+        }
 
         // Update cumulative gas used
         let gas_used = result.gas_used();
         self.gas_used += gas_used;
 
-        // Build receipt
+        // Build receipt.
+        // Fee Transfer logs are cached separately by the handler (pre_fee_logs /
+        // post_fee_logs) so they survive main tx revert.
+        let pre_fee_logs = self.evm.take_pre_fee_logs();
+        let post_fee_logs = self.evm.take_post_fee_logs();
         let ctx: MorphReceiptBuilderCtx<'_, Self::Evm> = MorphReceiptBuilderCtx {
             tx: tx.tx(),
             result,
             cumulative_gas_used: self.gas_used,
             l1_fee,
             morph_tx_fields,
+            pre_fee_logs,
+            post_fee_logs,
         };
         self.receipts.push(self.receipt_builder.build_receipt(ctx));
 
@@ -396,12 +400,8 @@ where
         ))
     }
 
-    /// Sets a state hook for observing state changes.
-    ///
-    /// Note: State hooks are not yet implemented for the Morph block executor.
-    /// This is a no-op placeholder for future implementation.
-    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {
-        // State hooks are not yet supported for Morph block executor
+    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.state_hook = hook;
     }
 
     /// Returns a mutable reference to the EVM instance.

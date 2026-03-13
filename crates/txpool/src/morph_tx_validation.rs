@@ -4,11 +4,10 @@
 //! that is used by both the validator (for new transactions) and the maintenance
 //! task (for revalidating existing transactions).
 
-use alloy_consensus::Transaction;
 use alloy_evm::Database;
 use alloy_primitives::{Address, U256};
 use morph_chainspec::hardfork::MorphHardfork;
-use morph_primitives::MorphTxEnvelope;
+use morph_primitives::{MorphTxEnvelope, transaction::morph_transaction::MORPH_TX_VERSION_1};
 use morph_revm::TokenFeeInfo;
 
 use crate::MorphTxError;
@@ -26,6 +25,8 @@ pub struct MorphTxValidationInput<'a> {
     pub eth_balance: U256,
     /// L1 data fee (pre-calculated)
     pub l1_data_fee: U256,
+    /// Current block base fee used to derive the effective gas price.
+    pub base_fee_per_gas: Option<u64>,
     /// Current hardfork
     pub hardfork: MorphHardfork,
 }
@@ -46,15 +47,35 @@ pub struct MorphTxValidationResult {
 /// Validates a MorphTx transaction's token-related fields.
 ///
 /// This is the main entry point for MorphTx validation. It:
-/// 1. Validates ETH balance >= tx.value() (value is still paid in ETH)
-/// 2. For `fee_token_id > 0`, validates token balance with REVM-compatible fee_limit semantics
-/// 3. For `fee_token_id == 0`, validates ETH can cover full tx cost + L1 data fee
+/// 1. Validates structural MorphTx rules (`version`, `fee_limit`, memo length, fee ordering)
+/// 2. Validates ETH balance >= tx.value() (value is still paid in ETH)
+/// 3. For `fee_token_id > 0`, validates token balance with REVM-compatible fee_limit semantics
+/// 4. For `fee_token_id == 0`, validates ETH can cover full tx cost + L1 data fee
 ///
 pub fn validate_morph_tx<DB: Database>(
     db: &mut DB,
     input: &MorphTxValidationInput<'_>,
 ) -> Result<MorphTxValidationResult, MorphTxError> {
-    let tx_value = input.consensus_tx.value();
+    // Keep MorphTx structural validation in the shared path so both initial
+    // admission and background revalidation enforce the same invariants.
+    let morph_tx = match input.consensus_tx {
+        MorphTxEnvelope::Morph(signed) => signed.tx(),
+        _ => return Err(MorphTxError::InvalidTokenId),
+    };
+
+    if !input.hardfork.is_jade() && morph_tx.version == MORPH_TX_VERSION_1 {
+        return Err(MorphTxError::InvalidFormat {
+            reason: "MorphTx version 1 is not yet active (jade fork not reached)".to_string(),
+        });
+    }
+
+    if let Err(reason) = morph_tx.validate() {
+        return Err(MorphTxError::InvalidFormat {
+            reason: reason.to_string(),
+        });
+    }
+
+    let tx_value = morph_tx.value;
     if tx_value > input.eth_balance {
         return Err(MorphTxError::InsufficientEthForValue {
             balance: input.eth_balance,
@@ -62,16 +83,13 @@ pub fn validate_morph_tx<DB: Database>(
         });
     }
 
-    let fields = input
-        .consensus_tx
-        .morph_fields()
-        .ok_or(MorphTxError::InvalidTokenId)?;
-    let fee_token_id = fields.fee_token_id;
-    let fee_limit = fields.fee_limit;
+    let fee_token_id = morph_tx.fee_token_id;
+    let fee_limit = morph_tx.fee_limit;
 
     // Shared fee components used by both ETH-fee and token-fee branches.
-    let gas_limit = U256::from(input.consensus_tx.gas_limit());
-    let max_fee_per_gas = U256::from(input.consensus_tx.max_fee_per_gas());
+    let gas_limit = U256::from(morph_tx.gas_limit);
+    let max_fee_per_gas = U256::from(morph_tx.max_fee_per_gas);
+    let effective_gas_price = U256::from(morph_tx.effective_gas_price(input.base_fee_per_gas));
     let gas_fee = gas_limit.saturating_mul(max_fee_per_gas);
     let total_eth_fee = gas_fee.saturating_add(input.l1_data_fee);
     let total_eth_cost = total_eth_fee.saturating_add(tx_value);
@@ -115,7 +133,9 @@ pub fn validate_morph_tx<DB: Database>(
         });
     }
 
-    let required_token_amount = token_info.eth_to_token_amount(total_eth_fee);
+    let token_gas_fee = gas_limit.saturating_mul(effective_gas_price);
+    let total_token_fee = token_gas_fee.saturating_add(input.l1_data_fee);
+    let required_token_amount = token_info.eth_to_token_amount(total_token_fee);
 
     // Match REVM semantics:
     // - fee_limit == 0 => use token balance as effective limit
@@ -147,12 +167,14 @@ pub fn validate_morph_tx<DB: Database>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
+    use alloy_consensus::Signed;
+    use alloy_primitives::{B256, Signature, TxKind, address};
+    use morph_primitives::{TxMorph, transaction::morph_transaction::MORPH_TX_VERSION_1};
+    use reth_revm::revm::database::EmptyDB;
 
     #[test]
     fn test_morph_tx_validation_input_construction() {
-        use alloy_consensus::{Signed, TxEip1559};
-        use alloy_primitives::{B256, Signature, TxKind};
+        use alloy_consensus::TxEip1559;
 
         let sender = address!("1000000000000000000000000000000000000001");
 
@@ -179,6 +201,7 @@ mod tests {
             sender,
             eth_balance: U256::from(1_000_000_000_000_000_000u128), // 1 ETH
             l1_data_fee: U256::from(100_000),
+            base_fee_per_gas: Some(1_000_000_000),
             hardfork: MorphHardfork::Viridian,
         };
 
@@ -186,5 +209,94 @@ mod tests {
         assert_eq!(input.hardfork, MorphHardfork::Viridian);
         assert_eq!(input.eth_balance, U256::from(1_000_000_000_000_000_000u128));
         assert_eq!(input.l1_data_fee, U256::from(100_000));
+        assert_eq!(input.base_fee_per_gas, Some(1_000_000_000));
+    }
+
+    #[test]
+    fn test_validate_morph_tx_rejects_invalid_format_before_state_checks() {
+        let sender = address!("1000000000000000000000000000000000000001");
+        let tx = TxMorph {
+            chain_id: 2818,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: TxKind::Call(address!("0000000000000000000000000000000000000002")),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            version: MORPH_TX_VERSION_1,
+            fee_token_id: 0,
+            fee_limit: U256::from(1u64),
+            reference: Some(B256::ZERO),
+            memo: None,
+            input: Default::default(),
+        };
+        let envelope = MorphTxEnvelope::Morph(Signed::new_unchecked(
+            tx,
+            Signature::test_signature(),
+            B256::ZERO,
+        ));
+        let input = MorphTxValidationInput {
+            consensus_tx: &envelope,
+            sender,
+            eth_balance: U256::from(1_000_000_000_000_000_000u128),
+            l1_data_fee: U256::ZERO,
+            base_fee_per_gas: Some(1_000_000_000),
+            hardfork: MorphHardfork::Jade,
+        };
+        let mut db = EmptyDB::default();
+
+        let err = validate_morph_tx(&mut db, &input).unwrap_err();
+
+        assert_eq!(
+            err,
+            MorphTxError::InvalidFormat {
+                reason: "version 1 MorphTx cannot have FeeLimit when FeeTokenID is 0".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_validate_morph_tx_rejects_v1_before_jade() {
+        let sender = address!("1000000000000000000000000000000000000001");
+        let tx = TxMorph {
+            chain_id: 2818,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: TxKind::Call(address!("0000000000000000000000000000000000000002")),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            version: MORPH_TX_VERSION_1,
+            fee_token_id: 0,
+            fee_limit: U256::ZERO,
+            reference: Some(B256::ZERO),
+            memo: None,
+            input: Default::default(),
+        };
+        let envelope = MorphTxEnvelope::Morph(Signed::new_unchecked(
+            tx,
+            Signature::test_signature(),
+            B256::ZERO,
+        ));
+        let input = MorphTxValidationInput {
+            consensus_tx: &envelope,
+            sender,
+            eth_balance: U256::from(1_000_000_000_000_000_000u128),
+            l1_data_fee: U256::ZERO,
+            base_fee_per_gas: Some(1_000_000_000),
+            hardfork: MorphHardfork::Emerald,
+        };
+        let mut db = EmptyDB::default();
+
+        let err = validate_morph_tx(&mut db, &input).unwrap_err();
+
+        assert_eq!(
+            err,
+            MorphTxError::InvalidFormat {
+                reason: "MorphTx version 1 is not yet active (jade fork not reached)".to_string(),
+            }
+        );
     }
 }

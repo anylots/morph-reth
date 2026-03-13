@@ -9,7 +9,7 @@ use alloy_evm::Database;
 use alloy_primitives::{Address, Bytes, U256, address, keccak256};
 use morph_chainspec::hardfork::MorphHardfork;
 use revm::SystemCallEvm;
-use revm::{Inspector, context_interface::result::EVMError, inspector::NoOpInspector};
+use revm::{context_interface::result::EVMError, inspector::NoOpInspector};
 
 use crate::evm::MorphContext;
 use crate::{MorphEvm, MorphInvalidTransaction};
@@ -27,7 +27,7 @@ const PRICE_RATIO_SLOT: U256 = U256::from_limbs([153u64, 0, 0, 0]);
 ///
 /// Contains the token parameters fetched from the L2 Token Registry contract.
 /// These parameters are used to calculate gas fees in alternative ERC20 tokens.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct TokenFeeInfo {
     /// The fee token address.
     pub token_address: Address,
@@ -97,9 +97,12 @@ impl TokenFeeInfo {
     /// Calculate the token amount required for a given ETH amount.
     ///
     /// Uses the price ratio and scale to convert ETH value to token amount.
+    #[inline]
     pub fn eth_to_token_amount(&self, eth_amount: U256) -> U256 {
+        // If price_ratio or scale is zero (misconfigured token), return MAX to prevent
+        // free-ride transactions. The caller's balance check will reject the tx.
         if self.price_ratio.is_zero() || self.scale.is_zero() {
-            return U256::ZERO;
+            return U256::MAX;
         }
 
         // token_amount = eth_amount * scale / price_ratio
@@ -122,7 +125,7 @@ fn read_registry_entry<DB: Database>(
     // Get the base slot for this token_id in tokenRegistry mapping
     let mut token_id_bytes = [0u8; 32];
     token_id_bytes[30..32].copy_from_slice(&token_id.to_be_bytes());
-    let base = compute_mapping_slot(TOKEN_REGISTRY_SLOT, token_id_bytes.to_vec());
+    let base = compute_mapping_slot(TOKEN_REGISTRY_SLOT, &token_id_bytes);
 
     // TokenInfo struct layout in storage (Solidity packing):
     // base + 0: tokenAddress (20 bytes) + padding
@@ -156,7 +159,7 @@ fn read_registry_entry<DB: Database>(
         db,
         L2_TOKEN_REGISTRY_ADDRESS,
         PRICE_RATIO_SLOT,
-        token_id_bytes.to_vec(),
+        &token_id_bytes,
     )?;
 
     Ok(Some(TokenRegistryEntry {
@@ -173,10 +176,15 @@ fn read_registry_entry<DB: Database>(
 ///
 /// For `mapping(keyType => valueType)` at slot `base_slot`,
 /// the value for `key` is at `keccak256(key ++ base_slot)`.
-pub fn compute_mapping_slot(base_slot: U256, mut key: Vec<u8>) -> U256 {
-    let mut preimage = base_slot.to_be_bytes_vec();
-    key.append(&mut preimage);
-    U256::from_be_bytes(keccak256(key).0)
+///
+/// Uses a stack-allocated `[u8; 64]` preimage buffer (32-byte key + 32-byte slot)
+/// to avoid heap allocations on every call.
+#[inline]
+pub fn compute_mapping_slot(base_slot: U256, key: &[u8; 32]) -> U256 {
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(key);
+    preimage[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+    U256::from_be_bytes(keccak256(preimage).0)
 }
 
 /// Calculate mapping slot for an address key (left-padded to 32 bytes).
@@ -184,15 +192,16 @@ pub fn compute_mapping_slot(base_slot: U256, mut key: Vec<u8>) -> U256 {
 pub fn compute_mapping_slot_for_address(base_slot: U256, account: Address) -> U256 {
     let mut key = [0u8; 32];
     key[12..32].copy_from_slice(account.as_slice());
-    compute_mapping_slot(base_slot, key.to_vec())
+    compute_mapping_slot(base_slot, &key)
 }
 
 /// Load a value from a mapping in contract storage.
+#[inline]
 fn read_mapping_value<DB: Database>(
     db: &mut DB,
     contract: Address,
     base_slot: U256,
-    key: Vec<u8>,
+    key: &[u8; 32],
 ) -> Result<U256, DB::Error> {
     db.storage(contract, compute_mapping_slot(base_slot, key))
 }
@@ -208,8 +217,8 @@ fn read_token_balance_with_fallback<DB: Database>(
     balance_slot: Option<U256>,
     hardfork: MorphHardfork,
 ) -> Result<U256, DB::Error> {
-    if balance_slot.is_some() {
-        return read_balance_from_storage(db, token, account, balance_slot);
+    if let Some(slot) = balance_slot {
+        return read_balance_from_storage(db, token, account, slot);
     }
 
     // EVM fallback: construct temporary MorphEvm for balanceOf call
@@ -224,22 +233,16 @@ fn read_token_balance_with_fallback<DB: Database>(
 }
 
 /// Read ERC20 balance directly from storage slot.
-///
-/// Returns zero if `balance_slot` is `None`.
+#[inline]
 fn read_balance_from_storage<DB: Database>(
     db: &mut DB,
     token: Address,
     account: Address,
-    balance_slot: Option<U256>,
+    balance_slot: U256,
 ) -> Result<U256, DB::Error> {
-    match balance_slot {
-        Some(slot) => {
-            let mut key = [0u8; 32];
-            key[12..32].copy_from_slice(account.as_slice());
-            read_mapping_value(db, token, slot, key.to_vec())
-        }
-        None => Ok(U256::ZERO),
-    }
+    let mut key = [0u8; 32];
+    key[12..32].copy_from_slice(account.as_slice());
+    read_mapping_value(db, token, balance_slot, &key)
 }
 
 /// Execute EVM `balanceOf(address)` call.
@@ -250,7 +253,6 @@ fn query_balance_via_system_call<DB, I>(
 ) -> Result<U256, EVMError<DB::Error, MorphInvalidTransaction>>
 where
     DB: Database,
-    I: Inspector<MorphContext<DB>>,
 {
     let calldata = encode_balance_of_calldata(account);
     match evm.system_call_one(token, calldata) {
@@ -277,7 +279,6 @@ pub fn query_erc20_balance<DB, I>(
 ) -> Result<U256, EVMError<DB::Error, MorphInvalidTransaction>>
 where
     DB: Database,
-    I: Inspector<MorphContext<DB>>,
 {
     query_balance_via_system_call(evm, token, account)
 }
@@ -314,9 +315,9 @@ mod tests {
     fn test_mapping_slot() {
         // Test that mapping slot calculation produces deterministic results
         let slot = U256::from(151);
-        let key = vec![0u8; 32];
-        let result1 = compute_mapping_slot(slot, key.clone());
-        let result2 = compute_mapping_slot(slot, key);
+        let key = [0u8; 32];
+        let result1 = compute_mapping_slot(slot, &key);
+        let result2 = compute_mapping_slot(slot, &key);
         assert_eq!(result1, result2);
     }
 
@@ -353,7 +354,8 @@ mod tests {
 
         let eth_amount = U256::from(1_000_000_000_000_000_000u128);
         let token_amount = info.eth_to_token_amount(eth_amount);
-        assert_eq!(token_amount, U256::ZERO);
+        // Misconfigured token returns MAX to prevent free-ride transactions
+        assert_eq!(token_amount, U256::MAX);
     }
 
     #[test]

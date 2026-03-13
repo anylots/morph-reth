@@ -198,40 +198,6 @@ impl MorphEngineValidator {
     }
 }
 
-impl StateRootValidator<morph_primitives::MorphPrimitives> for MorphEngineValidator {
-    // should_compute_state_root: use default (always true).
-    // Always compute MPT roots so the trie stays up-to-date from genesis.
-
-    fn validate_state_root(
-        &self,
-        block: &RecoveredBlock<morph_primitives::Block>,
-        computed_state_root: B256,
-    ) -> Result<(), ConsensusError> {
-        // Before Jade, block headers carry ZK-trie (Poseidon) roots while reth computes
-        // MPT (Keccak) roots — they can never match. We still compute the root above
-        // (to keep the trie current), but skip the comparison against the header.
-        if !self
-            .chain_spec
-            .is_jade_active_at_timestamp(block.header().timestamp())
-        {
-            return Ok(());
-        }
-
-        // After Jade, enforce strict MPT state root equality.
-        let expected = block.header().state_root();
-        if computed_state_root != expected {
-            return Err(ConsensusError::BodyStateRootDiff(
-                GotExpected {
-                    got: computed_state_root,
-                    expected,
-                }
-                .into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
 impl PayloadValidator<MorphPayloadTypes> for MorphEngineValidator {
     type Block = morph_primitives::Block;
 
@@ -295,6 +261,34 @@ impl PayloadValidator<MorphPayloadTypes> for MorphEngineValidator {
         if attr.timestamp() < header.timestamp() {
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
+        Ok(())
+    }
+}
+
+impl StateRootValidator<morph_primitives::MorphPrimitives> for MorphEngineValidator {
+    fn validate_state_root(
+        &self,
+        block: &RecoveredBlock<morph_primitives::Block>,
+        computed_state_root: B256,
+    ) -> Result<(), ConsensusError> {
+        let jade_active = self
+            .chain_spec
+            .is_jade_active_at_timestamp(block.header().timestamp());
+
+        // Enforce canonical state-root equality in MPT mode (post-Jade).
+        if jade_active {
+            let expected_state_root = block.header().state_root();
+            if computed_state_root != expected_state_root {
+                return Err(ConsensusError::BodyStateRootDiff(
+                    GotExpected {
+                        got: computed_state_root,
+                        expected: expected_state_root,
+                    }
+                    .into(),
+                ));
+            }
+        }
+
         Ok(())
     }
 }

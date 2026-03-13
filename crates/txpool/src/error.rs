@@ -33,14 +33,6 @@ pub enum MorphTxError {
         token_id: u16,
     },
 
-    /// The fee_limit is lower than the required token amount.
-    FeeLimitTooLow {
-        /// The fee_limit specified in the transaction.
-        fee_limit: U256,
-        /// The required token amount for the transaction.
-        required: U256,
-    },
-
     /// Insufficient ERC20 token balance to pay for gas.
     InsufficientTokenBalance {
         /// The token ID.
@@ -69,6 +61,12 @@ pub enum MorphTxError {
         /// Error message.
         message: String,
     },
+
+    /// MorphTx format validation failed (version, memo length, gas fee ordering).
+    InvalidFormat {
+        /// Reason for the validation failure.
+        reason: String,
+    },
 }
 
 impl fmt::Display for MorphTxError {
@@ -88,15 +86,6 @@ impl fmt::Display for MorphTxError {
             }
             Self::InvalidPriceRatio { token_id } => {
                 write!(f, "token ID {token_id} has invalid price ratio (zero)")
-            }
-            Self::FeeLimitTooLow {
-                fee_limit,
-                required,
-            } => {
-                write!(
-                    f,
-                    "fee_limit ({fee_limit}) is lower than required token amount ({required})"
-                )
             }
             Self::InsufficientTokenBalance {
                 token_id,
@@ -119,6 +108,9 @@ impl fmt::Display for MorphTxError {
             Self::TokenInfoFetchFailed { token_id, message } => {
                 write!(f, "failed to fetch token info for ID {token_id}: {message}")
             }
+            Self::InvalidFormat { reason } => {
+                write!(f, "invalid MorphTx format: {reason}")
+            }
         }
     }
 }
@@ -132,14 +124,14 @@ impl PoolTransactionError for MorphTxError {
         match self {
             // Missing/invalid MorphTx fee fields indicate malformed transaction input.
             Self::InvalidTokenId => true,
+            // Format violations (bad version, memo too long, etc.) are malformed input.
+            Self::InvalidFormat { .. } => true,
             // Token not found or not active - could be due to temporary state, not penalizable
             Self::TokenNotFound { .. } | Self::TokenNotActive { .. } => false,
             // Invalid price ratio - configuration issue, not penalizable
             Self::InvalidPriceRatio { .. } => false,
             // Insufficient balance or fee limit - normal validation failure
-            Self::FeeLimitTooLow { .. }
-            | Self::InsufficientTokenBalance { .. }
-            | Self::InsufficientEthForValue { .. } => false,
+            Self::InsufficientTokenBalance { .. } | Self::InsufficientEthForValue { .. } => false,
             // Fetch failures - infrastructure issue, not penalizable
             Self::TokenInfoFetchFailed { .. } => false,
         }
@@ -185,13 +177,6 @@ mod tests {
         let err = MorphTxError::TokenNotActive { token_id: 2 };
         assert!(err.to_string().contains("token ID 2"));
         assert!(err.to_string().contains("not active"));
-
-        let err = MorphTxError::FeeLimitTooLow {
-            fee_limit: U256::from(100),
-            required: U256::from(200),
-        };
-        assert!(err.to_string().contains("100"));
-        assert!(err.to_string().contains("200"));
 
         let err = MorphTxError::InsufficientTokenBalance {
             token_id: 1,

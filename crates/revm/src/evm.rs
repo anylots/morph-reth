@@ -1,10 +1,13 @@
-use crate::{MorphBlockEnv, MorphTxEnv, precompiles::MorphPrecompiles};
+use crate::{
+    MorphBlockEnv, MorphTxEnv, l1block::L1BlockInfo, precompiles::MorphPrecompiles,
+    token_fee::TokenFeeInfo,
+};
 use alloy_evm::Database;
-use alloy_primitives::{Log, U256, keccak256};
+use alloy_primitives::{U256, keccak256};
 use morph_chainspec::hardfork::MorphHardfork;
 use revm::{
     Context, Inspector,
-    context::{CfgEnv, ContextError, Evm, FrameStack},
+    context::{CfgEnv, ContextError, Evm, FrameStack, Journal},
     handler::{
         EthFrame, EvmTr, FrameInitOrResult, FrameTr, ItemOrResult, instructions::EthInstructions,
     },
@@ -17,7 +20,12 @@ use revm::{
 };
 
 /// The Morph EVM context type.
-pub type MorphContext<DB> = Context<MorphBlockEnv, MorphTxEnv, CfgEnv<MorphHardfork>, DB>;
+///
+/// Uses [`L1BlockInfo`] as the `CHAIN` type parameter.  Note that L1 fee
+/// parameters are fetched **per-transaction** (not per-block) because the
+/// L1 Gas Price Oracle can be updated by a regular transaction mid-block.
+pub type MorphContext<DB> =
+    Context<MorphBlockEnv, MorphTxEnv, CfgEnv<MorphHardfork>, DB, Journal<DB>, L1BlockInfo>;
 
 #[inline]
 fn as_u64_saturated(value: U256) -> u64 {
@@ -83,8 +91,25 @@ pub struct MorphEvm<DB: Database, I> {
         MorphPrecompiles,
         EthFrame<EthInterpreter>,
     >,
-    /// Preserved logs from the last transaction
-    pub logs: Vec<Log>,
+    /// Cached token fee info from the validation/deduction phase.
+    /// Ensures consistent price_ratio/scale between deduct and reimburse,
+    /// matching go-ethereum's `st.feeRate`/`st.tokenScale` caching pattern.
+    pub(crate) cached_token_fee_info: Option<TokenFeeInfo>,
+    /// Cached L1 data fee calculated during handler validation.
+    /// Avoids re-encoding the full transaction RLP in the block executor's
+    /// receipt-building path (the handler already has the encoded bytes via
+    /// `MorphTxEnv.rlp_bytes`).
+    pub(crate) cached_l1_data_fee: U256,
+    /// Transfer event logs from token fee deduction (pre-execution phase).
+    ///
+    /// In go-ethereum, `buyAltTokenGas()` emits Transfer events into `StateDB.logs`
+    /// which is independent of the state snapshot/revert mechanism — logs survive
+    /// regardless of main tx result. revm's `ExecutionResult::Revert` has no `logs`
+    /// field, so we cache fee-related logs separately from the journal and merge
+    /// them into the receipt in the block executor.
+    pub(crate) pre_fee_logs: Vec<alloy_primitives::Log>,
+    /// Transfer event logs from token fee reimbursement (post-execution phase).
+    pub(crate) post_fee_logs: Vec<alloy_primitives::Log>,
 }
 
 impl<DB: Database, I> MorphEvm<DB, I> {
@@ -115,7 +140,6 @@ impl<DB: Database, I> MorphEvm<DB, I> {
         })
     }
 
-    /// Inner helper function to create a new Morph EVM with empty logs.
     #[inline]
     #[expect(clippy::type_complexity)]
     fn new_inner(
@@ -129,13 +153,16 @@ impl<DB: Database, I> MorphEvm<DB, I> {
     ) -> Self {
         Self {
             inner,
-            logs: Vec::new(),
+            cached_token_fee_info: None,
+            cached_l1_data_fee: U256::ZERO,
+            pre_fee_logs: Vec::new(),
+            post_fee_logs: Vec::new(),
         }
     }
 }
 
 impl<DB: Database, I> MorphEvm<DB, I> {
-    /// Consumed self and returns a new Evm type with given Inspector.
+    /// Consumes self and returns a new Evm type with given Inspector.
     pub fn with_inspector<OINSP>(self, inspector: OINSP) -> MorphEvm<DB, OINSP> {
         MorphEvm::new_inner(self.inner.with_inspector(inspector))
     }
@@ -150,10 +177,36 @@ impl<DB: Database, I> MorphEvm<DB, I> {
         self.inner.into_inspector()
     }
 
-    /// Take logs from the EVM.
+    /// Returns the cached token fee info set during handler validation.
+    ///
+    /// The cache is populated by `validate_and_deduct_token_fee` and persists
+    /// through the handler lifecycle so that post-execution code (e.g., the
+    /// block executor's receipt builder) can reuse it without re-reading the DB.
     #[inline]
-    pub fn take_logs(&mut self) -> Vec<Log> {
-        std::mem::take(&mut self.logs)
+    pub fn cached_token_fee_info(&self) -> Option<TokenFeeInfo> {
+        self.cached_token_fee_info
+    }
+
+    /// Returns the L1 data fee cached during handler validation.
+    ///
+    /// Set in `validate_and_deduct_eth_fee` / `validate_and_deduct_token_fee` and
+    /// reused by `reward_beneficiary` and the block executor's receipt builder,
+    /// avoiding redundant `calculate_tx_l1_cost` calls and RLP re-encoding.
+    #[inline]
+    pub fn cached_l1_data_fee(&self) -> U256 {
+        self.cached_l1_data_fee
+    }
+
+    /// Takes the cached pre-execution fee logs (token fee deduction Transfer events).
+    #[inline]
+    pub fn take_pre_fee_logs(&mut self) -> Vec<alloy_primitives::Log> {
+        std::mem::take(&mut self.pre_fee_logs)
+    }
+
+    /// Takes the cached post-execution fee logs (token fee reimbursement Transfer events).
+    #[inline]
+    pub fn take_post_fee_logs(&mut self) -> Vec<alloy_primitives::Log> {
+        std::mem::take(&mut self.post_fee_logs)
     }
 }
 

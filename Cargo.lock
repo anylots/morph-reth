@@ -4829,7 +4829,6 @@ dependencies = [
  "morph-rpc",
  "morph-txpool",
  "parking_lot",
- "reqwest",
  "reth-chainspec",
  "reth-db",
  "reth-engine-local",
@@ -4850,7 +4849,6 @@ dependencies = [
  "reth-transaction-pool",
  "reth-trie",
  "serde",
- "serde_json",
  "tokio",
  "tokio-stream",
 ]
@@ -4950,7 +4948,6 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-primitives",
- "alloy-rlp",
  "alloy-sol-types",
  "auto_impl",
  "derive_more",

@@ -288,9 +288,10 @@ impl MorphPayloadBuilderCtx {
     ) -> Result<Vec<Bytes>, PayloadBuilderError> {
         let block_gas_limit = builder.evm().block().gas_limit();
         let base_fee = builder.evm().block().basefee();
-        let mut executed_txs: Vec<Bytes> = Vec::new();
+        let l1_tx_count = self.attributes().transactions.len();
+        let mut executed_txs: Vec<Bytes> = Vec::with_capacity(l1_tx_count);
         // Track gas spent by each transaction for error reporting
-        let mut gas_spent_by_transactions: Vec<u64> = Vec::new();
+        let mut gas_spent_by_transactions: Vec<u64> = Vec::with_capacity(l1_tx_count);
 
         for (tx_idx, tx_with_encoded) in self.attributes().transactions.iter().enumerate() {
             // The transaction is already recovered in `try_new` via `try_into_recovered()`.
@@ -516,7 +517,7 @@ impl MorphPayloadBuilderCtx {
             info.total_fees += U256::from(effective_tip) * U256::from(gas_used);
 
             // Store the transaction bytes for ExecutableL2Data
-            let mut tx_bytes = Vec::new();
+            let mut tx_bytes = Vec::with_capacity(tx.encode_2718_len());
             tx.encode_2718(&mut tx_bytes);
             executed_txs.push(Bytes::from(tx_bytes));
         }
