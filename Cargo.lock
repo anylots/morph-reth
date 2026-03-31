@@ -4952,7 +4952,6 @@ dependencies = [
  "derive_more",
  "eyre",
  "morph-chainspec",
- "morph-evm",
  "morph-primitives",
  "reth-ethereum-primitives",
  "reth-evm",
