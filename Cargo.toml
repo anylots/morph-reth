@@ -54,59 +54,59 @@ morph-rpc = { path = "crates/rpc" }
 morph-revm = { path = "crates/revm", default-features = false }
 morph-txpool = { path = "crates/txpool", default-features = false }
 
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-chain-state = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-cli-commands = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-consensus-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-engine-local = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-ethereum-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0", default-features = false }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-evm-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-payload-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0", default-features = false }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
-reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0", default-features = false }
+reth-basic-payload-builder = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-chain-state = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-chainspec = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-cli = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-cli-commands = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-cli-util = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-codecs = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-codecs-derive = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-consensus = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-consensus-common = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-db = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-db-api = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-e2e-test-utils = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-engine-local = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-engine-primitives = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-engine-tree = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-errors = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-eth-wire-types = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-ethereum = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-ethereum-cli = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-ethereum-consensus = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-ethereum-engine-primitives = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-ethereum-primitives = { git = "https://github.com/anylots/reth.git", branch = "dev", default-features = false }
+reth-evm = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-evm-ethereum = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-execution-types = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-metrics = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-network-peers = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-node-api = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-node-builder = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-node-core = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-node-ethereum = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-node-metrics = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-payload-builder = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-payload-primitives = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-payload-util = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-primitives-traits = { git = "https://github.com/anylots/reth.git", branch = "dev", default-features = false }
+reth-provider = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-api = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-builder = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-convert = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-eth-api = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-eth-types = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-rpc-server-types = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-storage-api = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-tasks = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-tracing = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-trie = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-transaction-pool = { git = "https://github.com/anylots/reth.git", branch = "dev" }
+reth-zstd-compressors = { git = "https://github.com/anylots/reth.git", branch = "dev", default-features = false }
 
-reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0", features = [
+reth-revm = { git = "https://github.com/anylots/reth.git", branch = "dev", features = [
   "std",
   "optional-checks",
 ] }
@@ -180,10 +180,6 @@ test-case = "3"
 pyroscope = "0.5.8"
 pyroscope_pprofrs = "0.2.10"
 
-# vergen 9.1.0 switched to vergen-lib 9.x, breaking vergen-git2 1.x (which uses vergen-lib 0.x).
-# Pin vergen + vergen-lib to 9.0.6 so vergen and vergen-git2 share the same vergen-lib 0.1.6 instance.
-[patch.crates-io]
-vergen = { git = "https://github.com/rustyhorde/vergen", rev = "a43c276d2b68d05832a429cc4540755541ca4950" }
-vergen-lib = { git = "https://github.com/rustyhorde/vergen", rev = "a43c276d2b68d05832a429cc4540755541ca4950" }
+
 
 
